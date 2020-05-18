@@ -29,6 +29,7 @@ volatile uint32_t g_ul_value = 0;
 
 volatile int listaY[200];
 volatile int listaX[200];
+volatile int n = 0;
 
 /************************************************************************/
 /* LCD + TOUCH                                                          */
@@ -301,26 +302,34 @@ void task_lcd(void){
 	// Busca um novo valor na fila do adc!
     // formata
     // e imprime no LCD o dado
-    if (xQueueReceive( xQueueADC, &(adc), ( TickType_t )  100 / portTICK_PERIOD_MS)) {
-      char b[512];
-      sprintf(b, "%04d", adc.value);
-      font_draw_text(&arial_72, b, 70, 50, 2);
+	if (xQueueReceive( xQueueADC, &(adc), ( TickType_t )  100 / portTICK_PERIOD_MS)) {
+		char b[512];
+		sprintf(b, "%04d", adc.value);
+		font_draw_text(&arial_72, b, 70, 50, 2);
 	  
-	  ili9488_set_foreground_color(COLOR_CONVERT(COLOR_WHITE));
-	  ili9488_draw_filled_rectangle(x_cruz,y_cruz-larg-10,x_cruz+larg,y_cruz+10);
-	  ili9488_set_foreground_color(COLOR_CONVERT(COLOR_BLACK));
-	  ili9488_draw_line(x_cruz,y_cruz-larg,x_cruz,y_cruz);
-	  ili9488_draw_line(x_cruz,y_cruz,x_cruz+larg,y_cruz);
-	  ili9488_draw_circle(x_cruz+larg/2, y_cruz-(adc.value/20),3);
+		ili9488_set_foreground_color(COLOR_CONVERT(COLOR_WHITE));
+		ili9488_draw_filled_rectangle(x_cruz,y_cruz-larg-10,x_cruz+larg,y_cruz+10);
+		ili9488_set_foreground_color(COLOR_CONVERT(COLOR_BLACK));
+		ili9488_draw_line(x_cruz,y_cruz-larg,x_cruz,y_cruz);
+		ili9488_draw_line(x_cruz,y_cruz,x_cruz+larg,y_cruz);
+		ili9488_draw_circle(x_cruz+150, y_cruz-(adc.value/20),3);
 	  
-	  for (int i = 0; i < 200, i++) {
-		  if (listaY[i] != -1 && listaX[i] != -1) {
-		  
-		  
-		  }
-	  }
-	  
-	  
+		for (int i = n-1; i >= 0; i++) {
+			if (listaY[i] != -1) {
+				ili9488_set_foreground_color(COLOR_CONVERT(COLOR_BLUE));
+				if (i == n-1) {	
+					ili9488_draw_line(listaX[i], listaY[i], x_cruz+150, y_cruz-(adc.value/20));
+				} else {
+					if (i != 0) {
+						ili9488_draw_line(listaX[i], listaY[i], listaX[i-1], listaY[i-1]);
+					}
+				}
+				listaX[i]--;
+			}	
+		}
+		listaX[n] = x_cruz+150-1;
+		listaY[n] = y_cruz-(adc.value/20);
+		n++;	  
 	}
   }
 }
@@ -378,11 +387,6 @@ void task_adc(void){
 
 int main(void)
 {
-
-	for (int i = 0; i < 200; i++) {
-		listaY[i] = -1;
-		listaX[i] = -1;
-	}
 	
   /* Initialize the USART configuration struct */
   const usart_serial_options_t usart_serial_options = {
