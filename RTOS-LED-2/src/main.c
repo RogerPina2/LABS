@@ -9,6 +9,52 @@
 #define TASK_MONITOR_STACK_PRIORITY        (tskIDLE_PRIORITY)
 #define TASK_LED_STACK_SIZE                (1024/sizeof(portSTACK_TYPE))
 #define TASK_LED_STACK_PRIORITY            (tskIDLE_PRIORITY)
+#define TASK_LED1_STACK_SIZE                (1024/sizeof(portSTACK_TYPE))
+#define TASK_LED1_STACK_PRIORITY            (tskIDLE_PRIORITY)
+#define TASK_LED2_STACK_SIZE                (1024/sizeof(portSTACK_TYPE))
+#define TASK_LED2_STACK_PRIORITY            (tskIDLE_PRIORITY)
+#define TASK_LED3_STACK_SIZE                (1024/sizeof(portSTACK_TYPE))
+#define TASK_LED3_STACK_PRIORITY            (tskIDLE_PRIORITY)
+
+
+
+#define LED1_PIO PIOA
+#define LED1_PIO_ID ID_PIOA
+#define LED1_IDX 0
+#define LED1_IDX_MASK (1 << LED1_IDX)
+
+#define LED2_PIO			PIOC 
+#define LED2_PIO_ID		ID_PIOC 
+#define LED2_IDX			30 
+#define LED2_IDX_MASK		(1 << LED2_IDX) 
+
+#define LED3_PIO			PIOB 
+#define LED3_PIO_ID		ID_PIOB 
+#define LED3_IDX			2 
+#define LED3_IDX_MASK		(1 << LED3_IDX)
+
+#define BUT1_PIO            PIOD
+#define BUT1_PIO_ID         16
+#define BUT1_PIO_IDX        28
+#define BUT1_PIO_IDX_MASK   (1u << BUT1_PIO_IDX)
+
+#define BUT2_PIO			PIOC 
+#define BUT2_PIO_ID			ID_PIOC 
+#define BUT2_PIO_IDX		31 
+#define BUT2_PIO_IDX_MASK	(1u << BUT2_PIO_IDX) 
+
+#define BUT3_PIO			PIOA 
+#define BUT3_PIO_ID			ID_PIOA 
+#define BUT3_PIO_IDX		19 
+#define BUT3_PIO_IDX_MASK	(1 << BUT3_PIO_IDX) 
+
+
+/** Semaforo a ser usado pela task led 
+    tem que ser var global! */
+SemaphoreHandle_t xSemaphore;
+SemaphoreHandle_t xSemaphore2;
+SemaphoreHandle_t xSemaphore3;
+
 
 extern void vApplicationStackOverflowHook(xTaskHandle *pxTask,
 		signed char *pcTaskName);
@@ -36,6 +82,7 @@ extern void vApplicationStackOverflowHook(xTaskHandle *pxTask,
  */
 extern void vApplicationIdleHook(void)
 {
+	pmc_sleep(SAM_PM_SMODE_SLEEP_WFI);
 }
 
 /**
@@ -65,25 +112,180 @@ static void task_monitor(void *pvParameters)
 {
 	static portCHAR szList[256];
 	UNUSED(pvParameters);
+	
+	/* Block for 2000ms. */
+    const TickType_t xDelay_monitor = 3000 / portTICK_PERIOD_MS;
 
 	for (;;) {
 		printf("--- task ## %u\n", (unsigned int)uxTaskGetNumberOfTasks());
 		vTaskList((signed portCHAR *)szList);
 		printf(szList);
-		vTaskDelay(1000);
+		vTaskDelay(xDelay_monitor);
 	}
+}
+
+/**                                                               
+* callback do botao                                               
+* libera semaforo: xSemaphore                                    
+*/
+void but1_callback(void){
+    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+    printf("but_callback \n");
+    xSemaphoreGiveFromISR(xSemaphore, &xHigherPriorityTaskWoken);
+    printf("semafaro tx \n");
+}
+
+/**                                                               
+* callback do botao                                               
+* libera semaforo: xSemaphore2                                   
+*/
+void but2_callback(void){
+    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+    printf("but2_callback \n");
+    xSemaphoreGiveFromISR(xSemaphore2, &xHigherPriorityTaskWoken);
+    printf("semafaro tx \n");
+}
+
+/**                                                               
+* callback do botao                                               
+* libera semaforo: xSemaphore3                                    
+*/
+void but3_callback(void){
+    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+    printf("but3_callback \n");
+    xSemaphoreGiveFromISR(xSemaphore3, &xHigherPriorityTaskWoken);
+    printf("semafaro tx \n");
 }
 
 /**
  * \brief This task, when activated, make LED blink at a fixed rate
  */
-static void task_led(void *pvParameters)
+static void task_led(void *pvParameters) {
+  /* We are using the semaphore for synchronisation so we create a binary
+  semaphore rather than a mutex.  We must make sure that the interrupt
+  does not attempt to use the semaphore before it is created! */
+  xSemaphore = xSemaphoreCreateBinary();
+
+  /* devemos iniciar a interrupcao no pino somente apos termos alocado
+  os recursos (no caso semaforo), nessa funcao inicializamos 
+  o botao e seu callback*/
+  /* init botão */
+  pmc_enable_periph_clk(BUT1_PIO_ID);
+  pio_configure(BUT1_PIO, PIO_INPUT, BUT1_PIO_IDX_MASK, PIO_PULLUP);
+  pio_handler_set(BUT1_PIO, BUT1_PIO_ID, BUT1_PIO_IDX_MASK, PIO_IT_FALL_EDGE, but1_callback);
+  pio_enable_interrupt(BUT1_PIO, BUT1_PIO_IDX_MASK);
+  NVIC_EnableIRQ(BUT1_PIO_ID);
+  NVIC_SetPriority(BUT1_PIO_ID, 4); // Prioridade 4
+
+  if (xSemaphore == NULL) {
+    printf("falha em criar o semaforo \n");
+  }
+  
+  for (;;) {
+    if( xSemaphoreTake(xSemaphore, ( TickType_t ) 500) == pdTRUE ){
+      LED_Toggle(LED0);
+    }
+  }
+}
+
+/**
+ * \brief This task, when activated, make LED blink at a fixed rate
+ */
+static void task_led1(void *pvParameters)
 {
 	UNUSED(pvParameters);
+	
+	pmc_enable_periph_clk(LED1_PIO_ID);
+	pio_configure(LED1_PIO, PIO_OUTPUT_0, LED1_IDX_MASK, PIO_DEFAULT);
+	
+	/* Block for 3000ms. */
+    const TickType_t xDelay_led1 = 3000 / portTICK_PERIOD_MS;
+	
 	for (;;) {
-		LED_Toggle(LED0);
-		vTaskDelay(1000);
+		for (int i = 0; i < 3; i++) {
+			pio_set(LED1_PIO, LED1_IDX_MASK);
+			vTaskDelay(xDelay_led1/15);
+			pio_clear(LED1_PIO, LED1_IDX_MASK);
+			vTaskDelay(xDelay_led1/15);
+		}
+		vTaskDelay(xDelay_led1);
 	}
+}
+
+static void task_led2(void *pvParameters) {
+  /* We are using the semaphore for synchronisation so we create a binary
+  semaphore rather than a mutex.  We must make sure that the interrupt
+  does not attempt to use the semaphore before it is created! */
+  xSemaphore2 = xSemaphoreCreateBinary();
+
+  /* devemos iniciar a interrupcao no pino somente apos termos alocado
+  os recursos (no caso semaforo), nessa funcao inicializamos 
+  o botao e seu callback*/
+  /* init botão */
+  pmc_enable_periph_clk(BUT2_PIO_ID);
+  pio_configure(BUT2_PIO, PIO_INPUT, BUT2_PIO_IDX_MASK, PIO_PULLUP);
+  pio_handler_set(BUT2_PIO, BUT2_PIO_ID, BUT2_PIO_IDX_MASK, PIO_IT_FALL_EDGE, but2_callback);
+  pio_enable_interrupt(BUT2_PIO, BUT2_PIO_IDX_MASK);
+  NVIC_EnableIRQ(BUT2_PIO_ID);
+  NVIC_SetPriority(BUT2_PIO_ID, 4); // Prioridade 4
+
+  if (xSemaphore2 == NULL) {
+    printf("falha em criar o semaforo \n");
+  }
+  
+  pmc_enable_periph_clk(LED2_PIO_ID);
+  pio_configure(LED2_PIO, PIO_OUTPUT_0, LED2_IDX_MASK, PIO_DEFAULT);
+  
+  /* Block for 3000ms. */
+  const TickType_t xDelay_led2 = 2000 / portTICK_PERIOD_MS;
+  
+  for (;;) {
+    if( xSemaphoreTake(xSemaphore2, ( TickType_t ) 500) == pdTRUE ){
+	  pio_set(LED2_PIO, LED2_IDX_MASK);
+	  vTaskDelay(xDelay_led2);
+	  pio_clear(LED2_PIO, LED2_IDX_MASK);
+	  vTaskDelay(xDelay_led2);
+    }
+  }
+}
+
+static void task_led3(void *pvParameters) {
+  /* We are using the semaphore for synchronisation so we create a binary
+  semaphore rather than a mutex.  We must make sure that the interrupt
+  does not attempt to use the semaphore before it is created! */
+  xSemaphore3 = xSemaphoreCreateBinary();
+
+  /* devemos iniciar a interrupcao no pino somente apos termos alocado
+  os recursos (no caso semaforo), nessa funcao inicializamos 
+  o botao e seu callback*/
+  /* init botão */
+  pmc_enable_periph_clk(BUT3_PIO_ID);
+  pio_configure(BUT3_PIO, PIO_INPUT, BUT3_PIO_IDX_MASK, PIO_PULLUP);
+  pio_handler_set(BUT3_PIO, BUT3_PIO_ID, BUT3_PIO_IDX_MASK, PIO_IT_FALL_EDGE, but3_callback);
+  pio_enable_interrupt(BUT3_PIO, BUT3_PIO_IDX_MASK);
+  NVIC_EnableIRQ(BUT3_PIO_ID);
+  NVIC_SetPriority(BUT3_PIO_ID, 4); // Prioridade 4
+
+  if (xSemaphore3 == NULL) {
+    printf("falha em criar o semaforo \n");
+  }
+  
+  pmc_enable_periph_clk(LED3_PIO_ID);
+  pio_configure(LED3_PIO, PIO_OUTPUT_0, LED3_IDX_MASK, PIO_DEFAULT);
+  
+  /* Block for 3000ms. */
+  const TickType_t xDelay_led3 = 2000 / portTICK_PERIOD_MS;
+  
+  for (;;) {
+    if( xSemaphoreTake(xSemaphore3, ( TickType_t ) 500) == pdTRUE ){
+		for(;;) {
+		  pio_set(LED3_PIO, LED3_IDX_MASK);
+		  vTaskDelay(xDelay_led3);
+		  pio_clear(LED3_PIO, LED3_IDX_MASK);
+		  vTaskDelay(xDelay_led3);
+		}
+    }
+  }
 }
 
 /**
@@ -146,10 +348,29 @@ int main(void)
 			TASK_LED_STACK_PRIORITY, NULL) != pdPASS) {
 		printf("Failed to create test led task\r\n");
 	}
+	
+	if (xTaskCreate(task_led1, "Led1", TASK_LED1_STACK_SIZE, NULL,
+			TASK_LED1_STACK_PRIORITY, NULL) != pdPASS) {
+		printf("Failed to create test led task\r\n");
+	}
+
+	if (xTaskCreate(task_led2, "Led2", TASK_LED2_STACK_SIZE, NULL,
+			TASK_LED2_STACK_PRIORITY, NULL) != pdPASS) {
+		printf("Failed to create test led task\r\n");
+	}
+	
+	if (xTaskCreate(task_led3, "Led3", TASK_LED3_STACK_SIZE, NULL,
+			TASK_LED3_STACK_PRIORITY, NULL) != pdPASS) {
+		printf("Failed to create test led task\r\n");
+	}
 
 	/* Start the scheduler. */
 	vTaskStartScheduler();
 
 	/* Will only get here if there was insufficient memory to create the idle task. */
+	while(1) {
+		
+	}
+
 	return 0;
 }
