@@ -15,21 +15,9 @@
 #define AFEC_POT_ID ID_AFEC1
 #define AFEC_POT_CHANNEL 6 // Canal do pino PC31
 
-/*
-// The conversion data is done flag
-volatile bool g_is_conversion_done = false;
-*/
-
-/** The conversion data value */
-volatile uint32_t g_ul_value = 0;
-
 /************************************************************************/
 /* prototypes                                                           */
 /************************************************************************/
-
-volatile int listaY[200];
-volatile int listaX[200];
-volatile int n = 0;
 
 /************************************************************************/
 /* LCD + TOUCH                                                          */
@@ -52,10 +40,6 @@ struct ili9488_opt_t g_ili9488_display_opt;
 #define TASK_LCD_STACK_SIZE            (4*1024/sizeof(portSTACK_TYPE))
 #define TASK_LCD_STACK_PRIORITY        (tskIDLE_PRIORITY)
 
-/** Semaforo a ser usado pela task adc 
-    tem que ser var global! */
-SemaphoreHandle_t xSemaphore_adc;
-
 typedef struct {
   uint x;
   uint y;
@@ -69,10 +53,29 @@ typedef struct {
 
 QueueHandle_t xQueueADC;
 
+/** The conversion data is done flag 
+volatile bool g_is_conversion_done = false;
+*/
+
+SemaphoreHandle_t xSemaphore;
+
+/** The conversion data value */
+volatile uint32_t g_ul_value = 0;
+
+
 /************************************************************************/
 /* handler/callbacks                                                    */
 /************************************************************************/
 
+static void AFEC_pot_Callback(void){
+	g_ul_value = afec_channel_get_value(AFEC_POT, AFEC_POT_CHANNEL);
+	BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+	xSemaphoreGiveFromISR(xSemaphore, &xHigherPriorityTaskWoken);
+	
+	adcData adc;
+	adc.value = g_ul_value;
+	xQueueSendFromISR(xQueueADC, &adc, &xHigherPriorityTaskWoken);
+}
 
 /************************************************************************/
 /* RTOS hooks                                                           */
@@ -249,6 +252,7 @@ void mxt_handler(struct mxt_device *device, uint *x, uint *y)
   } while ((mxt_is_message_pending(device)) & (i < MAX_ENTRIES));
 }
 
+
 /************************************************************************/
 /* tasks                                                                */
 /************************************************************************/
@@ -280,16 +284,10 @@ void task_lcd(void){
    
   // Escreve no LCD com fonts
   // criadas
-	font_draw_text(&calibri_36, "4096", 5, 200, 1);
-	font_draw_text(&calibri_36, "0", 30, 380, 1);
-	//font_draw_text(&sourcecodepro_28, "0", 50, 400, 1);
-	//font_draw_text(&calibri_36, "Oi Mundo! #$!@", 50, 100, 1);
-	//font_draw_text(&arial_72, "102456", 50, 200, 2);
-	ili9488_set_foreground_color(COLOR_CONVERT(COLOR_BLACK));
-	int larg = 200;
-	int x_cruz = 100;
-	int y_cruz = 400;
-
+	font_draw_text(&sourcecodepro_28, "OIMUNDO", 50, 50, 1);
+	font_draw_text(&calibri_36, "Oi Mundo! #$!@", 50, 100, 1);
+	font_draw_text(&arial_72, "102456", 50, 200, 2);
+  
   // strut local para armazenar msg enviada pela task do mxt
   touchData touch;
   adcData adc;
@@ -298,57 +296,20 @@ void task_lcd(void){
     if (xQueueReceive( xQueueTouch, &(touch), ( TickType_t )  500 / portTICK_PERIOD_MS)) {
       printf("Touch em: x:%d y:%d\n", touch.x, touch.y);
     }
-	
 	// Busca um novo valor na fila do adc!
     // formata
     // e imprime no LCD o dado
-	if (xQueueReceive( xQueueADC, &(adc), ( TickType_t )  100 / portTICK_PERIOD_MS)) {
-		char b[512];
-		sprintf(b, "%04d", adc.value);
-		font_draw_text(&arial_72, b, 70, 50, 2);
-	  
-		ili9488_set_foreground_color(COLOR_CONVERT(COLOR_WHITE));
-		ili9488_draw_filled_rectangle(x_cruz,y_cruz-larg-10,x_cruz+larg,y_cruz+10);
-		ili9488_set_foreground_color(COLOR_CONVERT(COLOR_BLACK));
-		ili9488_draw_line(x_cruz,y_cruz-larg,x_cruz,y_cruz);
-		ili9488_draw_line(x_cruz,y_cruz,x_cruz+larg,y_cruz);
-		ili9488_draw_circle(x_cruz+150, y_cruz-(adc.value/20),3);
-	  
-		for (int i = n-1; i >= 0; i++) {
-			if (listaY[i] != -1) {
-				ili9488_set_foreground_color(COLOR_CONVERT(COLOR_BLUE));
-				if (i == n-1) {	
-					ili9488_draw_line(listaX[i], listaY[i], x_cruz+150, y_cruz-(adc.value/20));
-				} else {
-					if (i != 0) {
-						ili9488_draw_line(listaX[i], listaY[i], listaX[i-1], listaY[i-1]);
-					}
-				}
-				listaX[i]--;
-			}	
-		}
-		listaX[n] = x_cruz+150-1;
-		listaY[n] = y_cruz-(adc.value/20);
-		n++;	  
-	}
+    if (xQueueReceive( xQueueADC, &(adc), ( TickType_t )  100 / portTICK_PERIOD_MS)) {
+      char b[512];
+      sprintf(b, "%04d", adc.value);
+      font_draw_text(&arial_72, b, 50, 200, 2);
+    }
   }
 }
 
-static void AFEC_pot_Callback(void){
-	g_ul_value = afec_channel_get_value(AFEC_POT, AFEC_POT_CHANNEL);
-
-	BaseType_t xHigherPriorityTaskWoken = pdFALSE;
-    printf("AFEC_pot_Callback \n");
-    xSemaphoreGiveFromISR(xSemaphore_adc, &xHigherPriorityTaskWoken);
-    printf("semafaro adc \n");
-	
-	adcData adc;
-	adc.value = g_ul_value;
-	xQueueSendFromISR(xQueueADC, &adc, &xHigherPriorityTaskWoken);
-}
-
 void task_adc(void){
-	xSemaphore_adc = xSemaphoreCreateBinary();
+
+  xSemaphore = xSemaphoreCreateBinary();
 	
   /* inicializa e configura adc */
   config_AFEC_pot(AFEC_POT, AFEC_POT_ID, AFEC_POT_CHANNEL, AFEC_pot_Callback);
@@ -357,20 +318,17 @@ void task_adc(void){
   afec_channel_enable(AFEC_POT, AFEC_POT_CHANNEL);
   afec_start_software_conversion(AFEC_POT);
   
-  //adcData adc;
+  adcData adc;
+  
+  if (xSemaphore == NULL)
+	printf("falha em criar o semaforo \n");
 
   while(1){
-	if (xSemaphore_adc == NULL) {
-		printf("falha em criar o semaforo \n");
-	}
-	
-    if( xSemaphoreTake(xSemaphore_adc, ( TickType_t ) 500) == pdTRUE ){
+    if(xSemaphoreTake(xSemaphore, ( TickType_t ) 500) == pdTRUE){
       printf("%d\n", g_ul_value);
 	  
-	  /*
-	  adc.value = g_ul_value;
-      xQueueSend(xQueueADC, &adc, 0);
-	  */
+	  //adc.value = g_ul_value;
+      //xQueueSend(xQueueADC, &adc, 0);
 	  
       vTaskDelay(500);
 
@@ -387,7 +345,6 @@ void task_adc(void){
 
 int main(void)
 {
-	
   /* Initialize the USART configuration struct */
   const usart_serial_options_t usart_serial_options = {
     .baudrate     = USART_SERIAL_EXAMPLE_BAUDRATE,
@@ -399,9 +356,19 @@ int main(void)
   sysclk_init(); /* Initialize system clocks */
   board_init();  /* Initialize board */
   
+  /*
+  // inicializa e configura adc //
+  config_AFEC_pot(AFEC_POT, AFEC_POT_ID, AFEC_POT_CHANNEL, AFEC_pot_Callback);
+  
+  // Selecina canal e inicializa conversão //
+  afec_channel_enable(AFEC_POT, AFEC_POT_CHANNEL);
+  afec_start_software_conversion(AFEC_POT);
+  */
+  
+    
   /* Initialize stdio on USART */
   stdio_serial_init(USART_SERIAL_EXAMPLE, &usart_serial_options);
-  
+ 
   /* Create task to handler touch */
   if (xTaskCreate(task_mxt, "mxt", TASK_MXT_STACK_SIZE, NULL, TASK_MXT_STACK_PRIORITY, NULL) != pdPASS) {
     printf("Failed to create test led task\r\n");
@@ -419,27 +386,9 @@ int main(void)
   
   /* Start the scheduler. */
   vTaskStartScheduler();
-	
-	/**
-	// inicializa e configura adc
-	config_AFEC_pot(AFEC_POT, AFEC_POT_ID, AFEC_POT_CHANNEL, AFEC_pot_Callback);
-	
-	// Selecina canal e inicializa conversão
-	afec_channel_enable(AFEC_POT, AFEC_POT_CHANNEL);
-	afec_start_software_conversion(AFEC_POT);
-	**/
-	
+
   while(1){
-		/**
-	    if(g_is_conversion_done){
-		    printf("%d\n", g_ul_value);
-		    delay_ms(500);
-		    
-		    // Selecina canal e inicializa conversão
-		    afec_channel_enable(AFEC_POT, AFEC_POT_CHANNEL);
-		    afec_start_software_conversion(AFEC_POT);
-	    }
-		**/
+
   }
 
 
